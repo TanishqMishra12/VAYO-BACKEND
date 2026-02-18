@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Real-time Matching Demo</title>
+    <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2em;
+        }
+        
+        .subtitle {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 0.95em;
+        }
+        
+        .status {
+            padding: 12px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .status.disconnected {
+            background: #fee;
+            color: #c33;
+            border-left: 4px solid #c33;
+        }
+        
+        .status.connected {
+            background: #efe;
+            color: #3c3;
+            border-left: 4px solid #3c3;
+        }
+        
+        .status.processing {
+            background: #fef7e0;
+            color: #e67e22;
+            border-left: 4px solid #e67e22;
+        }
+        
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .status.connected .status-dot {
+            background: #3c3;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+        
+        input, textarea, select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus, textarea:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        textarea {
+            min-height: 100px;
+            resize: vertical;
+            font-family: inherit;
+        }
+        
+        .tags-input {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 8px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            min-height: 50px;
+        }
+        
+        .tag {
+            background: #667eea;
+            color: white;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        
+        .tag-remove {
+            cursor: pointer;
+            font-weight: bold;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 14px 32px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            width: 100%;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .result-container {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .result-container.show {
+            display: block;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .tier-badge {
+            display: inline-block;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+        
+        .tier-soulmate {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+        
+        .tier-explorer {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+        
+        .tier-fallback {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            color: #333;
+        }
+        
+        .match-card {
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border-left: 4px solid #667eea;
+        }
+        
+        .match-score {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .logs {
+            margin-top: 20px;
+            padding: 15px;
+            background: #1e1e1e;
+            color: #0f0;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            margin-bottom: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Real-time Matching Demo</h1>
+        <p class="subtitle">AI-Powered Community Matching with WebSocket</p>
+        
+        <div id="status" class="status disconnected">
+            <span class="status-dot"></span>
+            <span id="statusText">Disconnected</span>
+        </div>
+        
+        <form id="matchForm">
+            <div class="form-group">
+                <label for="userId">User ID</label>
+                <input type="text" id="userId" value="demo_user_001" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="bio">Your Bio</label>
+                <textarea id="bio" required>Passionate Python developer specializing in AI and machine learning. I build neural networks daily and love discussing transformer architectures.</textarea>
+            </div>
+            
+            <div class="form-group">
+                <label>Interest Tags</label>
+                <div class="tags-input" id="tagsContainer">
+                    <span class="tag">Python <span class="tag-remove" onclick="removeTag(this)">×</span></span>
+                    <span class="tag">AI <span class="tag-remove" onclick="removeTag(this)">×</span></span>
+                    <span class="tag">Machine Learning <span class="tag-remove" onclick="removeTag(this)">×</span></span>
+                </div>
+                <input type="text" id="newTag" placeholder="Add tag and press Enter" style="margin-top: 8px;">
+            </div>
+            
+            <div class="form-group">
+                <label for="city">City</label>
+                <select id="city" required>
+                    <option value="San Francisco">San Francisco</option>
+                    <option value="New York">New York</option>
+                    <option value="Austin">Austin</option>
+                    <option value="Seattle">Seattle</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="timezone">Timezone</label>
+                <select id="timezone" required>
+                    <option value="America/Los_Angeles">America/Los_Angeles</option>
+                    <option value="America/New_York">America/New_York</option>
+                    <option value="America/Chicago">America/Chicago</option>
+                </select>
+            </div>
+            
+            <button type="submit" id="submitBtn">Find My Community</button>
+        </form>
+        
+        <div id="resultContainer" class="result-container">
+            <h3>Match Results</h3>
+            <div id="resultContent"></div>
+        </div>
+        
+        <div class="logs">
+            <div id="logs"></div>
+        </div>
+    </div>
+    
+    <script>
+        const API_URL = 'http://localhost:8000';
+        let socket = null;
+        let currentUserId = null;
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('matchForm').addEventListener('submit', handleSubmit);
+            document.getElementById('newTag').addEventListener('keypress', handleTagInput);
+            connectWebSocket();
+        });
+        
+        function connectWebSocket() {
+            currentUserId = document.getElementById('userId').value;
+            
+            socket = io(API_URL, {
+                auth: { user_id: currentUserId },
+                transports: ['websocket']
+            });
+            
+            socket.on('connect', () => {
+                updateStatus('connected', 'Connected - Ready to receive updates');
+                addLog('✓ WebSocket connected');
+            });
+            
+            socket.on('connection_status', (data) => {
+                addLog(`✓ ${data.message}`);
+            });
+            
+            socket.on('match_result', (data) => {
+                addLog('🎉 Match result received via WebSocket!');
+                displayResult(data.result);
+                updateStatus('connected', 'Match completed');
+            });
+            
+            socket.on('disconnect', () => {
+                updateStatus('disconnected', 'Disconnected');
+                addLog('✗ WebSocket disconnected');
+            });
+            
+            socket.on('error', (data) => {
+                addLog(`❌ Error: ${data.message}`);
+            });
+        }
+        
+        async function handleSubmit(e) {
+            e.preventDefault();
+            
+            // Get form data
+            const userId = document.getElementById('userId').value;
+            const bio = document.getElementById('bio').value;
+            const city = document.getElementById('city').value;
+            const timezone = document.getElementById('timezone').value;
+            
+            // Get tags
+            const tags = Array.from(document.querySelectorAll('.tag'))
+                .map(tag => tag.textContent.replace('×', '').trim());
+            
+            const profile = { user_id: userId, bio, interest_tags: tags, city, timezone };
+            
+            // Update status
+            updateStatus('processing', 'Initiating match request...');
+            document.getElementById('submitBtn').disabled = true;
+            
+            addLog(`▶ Sending match request for ${userId}`);
+            
+            try {
+                // Send API request
+                const response = await fetch(`${API_URL}/api/v1/match`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(profile)
+                });
+                
+                const data = await response.json();
+                
+                addLog(`✓ Task ID: ${data.task_id}`);
+                addLog(`⏱ Estimated time: ${data.estimated_time_ms}ms`);
+                addLog(`📡 Waiting for real-time result...`);
+                
+                updateStatus('processing', 'Processing match (waiting for WebSocket result)...');
+                
+            } catch (error) {
+                addLog(`❌ Error: ${error.message}`);
+                updateStatus('connected', 'Error - Ready to retry');
+                document.getElementById('submitBtn').disabled = false;
+            }
+        }
+        
+        function displayResult(result) {
+            const container = document.getElementById('resultContainer');
+            const content = document.getElementById('resultContent');
+            
+            let tierClass = `tier-${result.tier}`;
+            let tierText = result.tier.charAt(0).toUpperCase() + result.tier.slice(1);
+            
+            let html = `
+                <div class="tier-badge ${tierClass}">${tierText} Match</div>
+                <p><strong>Processing Time:</strong> ${result.processing_time_ms}ms</p>
+            `;
+            
+            if (result.auto_joined_community) {
+                html += `<p><strong>Auto-joined:</strong> ${result.auto_joined_community}</p>`;
+            }
+            
+            if (result.ai_intro_generated) {
+                html += `<p><strong>AI Introduction:</strong> ✓ Generated</p>`;
+            }
+            
+            if (result.matches && result.matches.length > 0) {
+                html += '<h4 style="margin-top: 20px;">Top Matches:</h4>';
+                result.matches.forEach((match, i) => {
+                    html += `
+                        <div class="match-card">
+                            <div class="match-score">${(match.match_score * 100).toFixed(0)}%</div>
+                            <h4>${match.community_name}</h4>
+                            <p><strong>Category:</strong> ${match.category}</p>
+                            <p><strong>Members:</strong> ${match.member_count.toLocaleString()}</p>
+                            <p><strong>Activity:</strong> ${match.recent_activity} messages (7 days)</p>
+                        </div>
+                    `;
+                });
+            }
+            
+            content.innerHTML = html;
+            container.classList.add('show');
+            document.getElementById('submitBtn').disabled = false;
+        }
+        
+        function updateStatus(status, text) {
+            const statusDiv = document.getElementById('status');
+            const statusText = document.getElementById('statusText');
+            
+            statusDiv.className = `status ${status}`;
+            statusText.textContent = text;
+        }
+        
+        function addLog(message) {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            entry.textContent = `[${timestamp}] ${message}`;
+            logs.appendChild(entry);
+            logs.scrollTop = logs.scrollHeight;
+        }
+        
+        function handleTagInput(e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                const input = e.target;
+                const value = input.value.trim();
+                
+                if (value) {
+                    addTag(value);
+                    input.value = '';
+                }
+            }
+        }
+        
+        function addTag(text) {
+            const container = document.getElementById('tagsContainer');
+            const tag = document.createElement('span');
+            tag.className = 'tag';
+            tag.innerHTML = `${text} <span class="tag-remove" onclick="removeTag(this)">×</span>`;
+            container.appendChild(tag);
+        }
+        
+        function removeTag(element) {
+            element.parentElement.remove();
+        }
+    </script>
+</body>
+</html>
