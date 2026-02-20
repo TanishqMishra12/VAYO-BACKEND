@@ -9,8 +9,8 @@ import socketio
 import os
 
 from .models import (
-    UserProfileInput, 
-    TaskStatusResponse, 
+    UserProfileInput,
+    TaskStatusResponse,
     MatchResult,
     MatchTier
 )
@@ -18,6 +18,8 @@ from .celery_tasks import process_match_task
 from .database import db_manager
 from .cache import cache_manager
 from .websocket_server import sio, initialize_redis, start_background_tasks, cleanup
+from .webhooks import router as webhooks_router
+from .dependencies import get_current_user
 
 
 @asynccontextmanager
@@ -50,8 +52,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Clerk webhook router — must be included BEFORE any auth-protected routes
+app.include_router(webhooks_router)
+
 # Mount static files for demo
-import os
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
