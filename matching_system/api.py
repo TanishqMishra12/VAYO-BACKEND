@@ -20,6 +20,7 @@ from .cache import cache_manager
 from .websocket_server import sio, initialize_redis, start_background_tasks, cleanup
 from .webhooks import router as webhooks_router
 from .dependencies import get_current_user
+from .preferences import router as preferences_router
 
 
 @asynccontextmanager
@@ -54,6 +55,9 @@ app.add_middleware(
 
 # Clerk webhook router — must be included BEFORE any auth-protected routes
 app.include_router(webhooks_router)
+
+# User onboarding preferences router
+app.include_router(preferences_router)
 
 # Mount static files for demo
 static_dir = os.path.join(os.path.dirname(__file__), "static")
