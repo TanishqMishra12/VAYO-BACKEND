@@ -1,0 +1,32 @@
+# VAYO Karma Points System — Implementation
+
+## Phase 1: Database Layer
+- [ ] Create `karma_migration.sql` — karma_ledger table, action_type ENUM, trigger for denormalized `karma_score` on `users`, indexes
+- [ ] Add `karma_score` column to `users` table via ALTER
+
+## Phase 2: Pydantic Models
+- [ ] Create `karma_models.py` — enums (KarmaActionType, KarmaTier), request/response schemas (KarmaAwardRequest, KarmaLedgerEntry, KarmaProfileResponse, InboxShieldUpdate)
+
+## Phase 3: Karma Service Layer
+- [ ] Create `karma.py` — APIRouter with endpoints:
+  - `POST /api/v1/karma/award` — append ledger row, return updated score
+  - `GET /api/v1/users/{user_id}/karma` — return score + tier + ledger history
+  - `PATCH /api/v1/users/{user_id}/inbox-shield` — update inbox shield threshold
+  - `GET /api/v1/users/{user_id}/karma/can-message/{target_user_id}` — outbound DM check
+  - `GET /api/v1/users/{user_id}/karma/can-join-event/{event_id}` — event eligibility (stub)
+
+## Phase 4: Database Manager Extensions
+- [ ] Add karma methods to [database.py](file:///d:/VAYO/matching_system/database.py) (or new `karma_db.py`):
+  - `insert_karma_entry()`
+  - `get_karma_score()`
+  - `get_karma_ledger()`
+  - `update_inbox_shield()`
+  - `check_outbound_message_eligibility()`
+
+## Phase 5: Integration
+- [ ] Register karma router in [api.py](file:///d:/VAYO/matching_system/api.py)
+- [ ] Update [requirements.txt](file:///d:/VAYO/matching_system/requirements.txt) if needed
+
+## Phase 6: Verification
+- [ ] Create `test_karma.py` — unit tests for models + integration tests for endpoints
+- [ ] Write walkthrough

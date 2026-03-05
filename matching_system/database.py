@@ -199,6 +199,119 @@ class DatabaseManager:
             rows = await conn.fetch(query, community_id, limit)
             return [dict(row) for row in rows]
     
+
+
+    async def insert_karma_entry(
+        self,
+        user_id: str,
+        action_type: str,
+        point_delta: int,
+        reference_id: str = None,
+    ) -> str:
+        """
+        Append a row to karma_ledger.
+        The DB trigger automatically updates users.karma_score.
+        Returns the new ledger entry UUID.
+        """
+        query = """
+            INSERT INTO karma_ledger (user_id, point_delta, action_type, reference_id)
+            VALUES ($1, $2, $3::karma_action_type_enum, $4)
+            RETURNING id;
+        """
+        async with self.pg_pool.acquire() as conn:
+            row = await conn.fetchrow(query, user_id, point_delta, action_type, reference_id)
+            return str(row["id"])
+
+    async def get_karma_score(self, user_id: str) -> Optional[int]:
+        """Read the denormalized karma_score from users (O(1))."""
+        query = "SELECT karma_score FROM users WHERE user_id = $1;"
+        async with self.pg_pool.acquire() as conn:
+            row = await conn.fetchrow(query, user_id)
+            return row["karma_score"] if row else None
+
+    async def get_karma_ledger(
+        self, user_id: str, limit: int = 20, offset: int = 0
+    ) -> List[Dict]:
+        """Return paginated ledger entries for a user, most recent first."""
+        query = """
+            SELECT id, action_type, point_delta, reference_id, created_at
+              FROM karma_ledger
+             WHERE user_id = $1
+             ORDER BY created_at DESC
+             LIMIT $2 OFFSET $3;
+        """
+        async with self.pg_pool.acquire() as conn:
+            rows = await conn.fetch(query, user_id, limit, offset)
+            return [dict(row) for row in rows]
+
+    async def get_inbox_shield(self, user_id: str) -> int:
+        """Return the user's inbox shield threshold (default 0)."""
+        query = "SELECT COALESCE(inbox_shield_threshold, 0) AS t FROM users WHERE user_id = $1;"
+        async with self.pg_pool.acquire() as conn:
+            row = await conn.fetchrow(query, user_id)
+            return row["t"] if row else 0
+
+    async def update_inbox_shield(self, user_id: str, threshold: int) -> None:
+        """Set the user's inbox shield threshold."""
+        query = "UPDATE users SET inbox_shield_threshold = $2 WHERE user_id = $1;"
+        async with self.pg_pool.acquire() as conn:
+            await conn.execute(query, user_id, threshold)
+
+    async def check_message_eligibility(
+        self, sender_id: str, target_id: str
+    ) -> Dict:
+        """
+        Check outbound DM eligibility.
+        Rules:
+          1. Sender's karma ≥ target's karma  (outbound rule)
+          2. Sender's karma ≥ target's inbox_shield_threshold
+        """
+        query = """
+            SELECT user_id,
+                   COALESCE(karma_score, 0) AS karma_score,
+                   COALESCE(inbox_shield_threshold, 0) AS inbox_shield
+              FROM users
+             WHERE user_id = ANY($1::text[]);
+        """
+        async with self.pg_pool.acquire() as conn:
+            rows = await conn.fetch(query, [sender_id, target_id])
+
+        lookup = {row["user_id"]: dict(row) for row in rows}
+        sender = lookup.get(sender_id, {"karma_score": 0, "inbox_shield": 0})
+        target = lookup.get(target_id, {"karma_score": 0, "inbox_shield": 0})
+
+        sender_score = sender["karma_score"]
+        target_score = target["karma_score"]
+        target_shield = target["inbox_shield"]
+
+
+        if sender_score < target_score:
+            return {
+                "allowed": False,
+                "reason": f"Your karma ({sender_score}) is below the recipient's karma ({target_score}). You can only message users with equal or lower karma.",
+                "sender_score": sender_score,
+                "target_score": target_score,
+                "target_inbox_shield": target_shield,
+            }
+
+
+        if sender_score < target_shield:
+            return {
+                "allowed": False,
+                "reason": f"The recipient's inbox shield requires a minimum karma of {target_shield}. Your karma is {sender_score}.",
+                "sender_score": sender_score,
+                "target_score": target_score,
+                "target_inbox_shield": target_shield,
+            }
+
+        return {
+            "allowed": True,
+            "reason": None,
+            "sender_score": sender_score,
+            "target_score": target_score,
+            "target_inbox_shield": target_shield,
+        }
+
     async def close(self):
         """Close database connections"""
         if self.pg_pool:

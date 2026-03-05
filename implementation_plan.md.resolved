@@ -1,0 +1,110 @@
+# Karma Points System — Implementation Plan
+
+Backend implementation of the Vayo Karma Points system: an append-only ledger with denormalized score, tier computation, outbound messaging rules, inbox shield, and event eligibility checks.
+
+## Proposed Changes
+
+### Database Layer
+
+#### [NEW] [karma_migration.sql](file:///d:/VAYO/matching_system/karma_migration.sql)
+
+SQL migration (idempotent, wrapped in `BEGIN`/`COMMIT`) that:
+
+1. **ENUM type** `karma_action_type_enum` — labels: `SIGNUP_EMAIL_VERIFY`, `SIGNUP_PROFILE_PHOTO`, `SIGNUP_VIBE_QUESTIONS`, `SIGNUP_CLAIM_ID`, `EVENT_RSVP`, `GPS_CHECKIN`, `EVENT_PHOTO_POST`, `PEER_ENDORSEMENT`, `HOST_EVENT`, `NO_SHOW_PENALTY`, `HOST_CANCEL_PENALTY`, `NEGATIVE_REVIEW_PENALTY`, `ADMIN_ADJUSTMENT`
+2. **`karma_ledger`** table — `id UUID PK DEFAULT gen_random_uuid()`, `user_id TEXT FK → users`, `point_delta INTEGER NOT NULL`, `action_type karma_action_type_enum NOT NULL`, `reference_id TEXT` (optional, e.g. event_id), `created_at TIMESTAMPTZ DEFAULT NOW()`
+3. **ALTER `users`** — add `karma_score INTEGER DEFAULT 0`, `inbox_shield_threshold INTEGER DEFAULT 0`
+4. **Trigger function** `update_karma_score()` — after INSERT on `karma_ledger`, runs `UPDATE users SET karma_score = karma_score + NEW.point_delta WHERE user_id = NEW.user_id`
+5. **Indexes** — `idx_karma_ledger_user` on [(user_id, created_at DESC)](file:///d:/VAYO/matching_system/database.py#202-206), `idx_users_karma_score` on [(karma_score)](file:///d:/VAYO/matching_system/database.py#202-206)
+
+---
+
+### Pydantic Models
+
+#### [NEW] [karma_models.py](file:///d:/VAYO/matching_system/karma_models.py)
+
+| Model | Purpose |
+|---|---|
+| `KarmaActionType(str, Enum)` | Mirrors `karma_action_type_enum` |
+| `KarmaTier(str, Enum)` | `BEGINNER`, `PATHFINDER`, `EXPLORER`, `CONQUEROR` |
+| `KarmaAwardRequest(BaseModel)` | `user_id`, `action_type`, `point_delta`, `reference_id?` |
+| `KarmaLedgerEntry(BaseModel)` | Single ledger row for history response |
+| `KarmaProfileResponse(BaseModel)` | `user_id`, `karma_score`, `tier`, `tier_label`, `next_tier_threshold?`, `inbox_shield_threshold` |
+| `InboxShieldUpdate(BaseModel)` | `threshold: int` (≥ 0) |
+| `MessageEligibilityResponse` | `allowed: bool`, `reason?: str` |
+
+Helper: `compute_tier(score: int) → KarmaTier` pure function.
+
+---
+
+### API Routes
+
+#### [NEW] [karma.py](file:///d:/VAYO/matching_system/karma.py)
+
+`APIRouter(prefix="/api/v1", tags=["karma"])`
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `POST` | `/karma/award` | Clerk JWT | Append ledger row, return `KarmaProfileResponse` |
+| `GET` | `/users/{user_id}/karma` | Clerk JWT | Score + tier + paginated ledger |
+| `PATCH` | `/users/{user_id}/inbox-shield` | Clerk JWT (self-only) | Set inbox shield threshold |
+| `GET` | `/users/{user_id}/karma/can-message/{target_user_id}` | Clerk JWT | Outbound rule + inbox shield check |
+
+---
+
+### Database Manager Extensions
+
+#### [MODIFY] [database.py](file:///d:/VAYO/matching_system/database.py)
+
+Add methods to [DatabaseManager](file:///d:/VAYO/matching_system/database.py#11-206):
+
+- `insert_karma_entry(user_id, action_type, point_delta, reference_id)` — `INSERT INTO karma_ledger`
+- `get_karma_score(user_id)` → [int](file:///d:/VAYO/matching_system/database.py#175-201) — reads `karma_score` from `users`
+- `get_karma_ledger(user_id, limit, offset)` → list of rows
+- `update_inbox_shield(user_id, threshold)` → update `users.inbox_shield_threshold`
+- `check_message_eligibility(sender_id, target_id)` → [(allowed, reason)](file:///d:/VAYO/matching_system/database.py#202-206) — compares sender's score vs target's score and inbox shield
+
+---
+
+### Integration
+
+#### [MODIFY] [api.py](file:///d:/VAYO/matching_system/api.py)
+
+Import and register `karma_router`:
+```python
+from .karma import router as karma_router
+app.include_router(karma_router)
+```
+
+---
+
+## Verification Plan
+
+### Automated Tests
+
+#### [NEW] [test_karma.py](file:///d:/VAYO/matching_system/test_karma.py)
+
+Script that tests the system end-to-end against a running server (mirrors the pattern in [test_example.py](file:///d:/VAYO/matching_system/test_example.py)):
+
+```bash
+# 1. Ensure services are running (FastAPI + PostgreSQL + Redis)
+# 2. Run migration
+psql -d community_matching -f matching_system/karma_migration.sql
+# 3. Run tests
+python -m matching_system.test_karma
+```
+
+Tests:
+1. **Award karma** → POST, verify score increases
+2. **Get karma profile** → GET, verify tier computation at each boundary (100, 300, 500, 1000)
+3. **Inbox shield** → PATCH threshold, then verify can-message endpoint blocks
+4. **Outbound rule** → Create two users with different scores, verify directional messaging
+5. **Duplicate prevention** — onboarding actions yield correct total of 100
+6. **Negative deltas** — penalty actions decrease score correctly
+
+### Manual Verification
+
+> [!NOTE]
+> Since the project uses Clerk JWT auth, automated integration tests would need a valid token. The test script will include a `--skip-auth` flag for local testing, or you can provide a Bearer token via CLI.
+
+- Run the migration on your local PostgreSQL and verify schema with `\d karma_ledger` and `\d users`.
+- Use the FastAPI Swagger UI at `http://localhost:8000/docs` to manually invoke karma endpoints.

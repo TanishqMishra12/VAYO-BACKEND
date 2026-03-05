@@ -21,6 +21,7 @@ from .websocket_server import sio, initialize_redis, start_background_tasks, cle
 from .webhooks import router as webhooks_router
 from .dependencies import get_current_user
 from .preferences import router as preferences_router
+from .karma import router as karma_router
 
 
 @asynccontextmanager
@@ -58,6 +59,9 @@ app.include_router(webhooks_router)
 
 # User onboarding preferences router
 app.include_router(preferences_router)
+
+# Karma points system router
+app.include_router(karma_router)
 
 # Mount static files for demo
 static_dir = os.path.join(os.path.dirname(__file__), "static")
